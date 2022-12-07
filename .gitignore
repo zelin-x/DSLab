@@ -1,0 +1,12 @@
+.idea/
+__pycache__/
+
+test.py
+*.json
+*.bin
+*.txt
+*.pkl
+*.log
+*.ckpt
+*.pth
+!empty.txt
