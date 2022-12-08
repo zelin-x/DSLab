@@ -16,7 +16,7 @@ from data_loader import data_loader
 from config import Config
 from utils import calculate_metrics, get_id2label, calculate_avg_F, print_metrics
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = '2'
 
 
 def valid(test_loader, model):
