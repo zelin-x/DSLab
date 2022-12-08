@@ -62,7 +62,7 @@ class Net(nn.Module, ABC):
         X = self.dropout(X)
 
         bs, seq_len = token_idxes.size(0), token_idxes.size(1)
-        input_lens = att_masks.sum(-1)
+        input_lens = att_masks.sum(-1).cpu()
         rnn_inputs = nn.utils.rnn.pack_padded_sequence(X, input_lens, batch_first=True, enforce_sorted=False)
         rnn_outputs, _ = self.encoder(rnn_inputs)
         rnn_outputs, _ = nn.utils.rnn.pad_packed_sequence(rnn_outputs, batch_first=True, total_length=seq_len)
