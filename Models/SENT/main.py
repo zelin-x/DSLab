@@ -16,7 +16,7 @@ from data_loader import data_loader
 from config import Config
 from utils import calculate_metrics, get_id2label, calculate_avg_F, print_metrics
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 def valid(test_loader, model):
@@ -66,28 +66,28 @@ def filter_and_relabel(model, _train_data_loader, id2label, cur_data_path, filte
         labels = total_labels[i]
         preds = total_pred[i]
         probs = total_prob[i]
-        for j in len(idxes):
+        for j in range(len(idxes)):
             idx = idxes[j].item()
             label = labels[j].item()
             pred = preds[j].item()
             prob = probs[j].item()
             if prob >= dynamic_threshold:
-                new_label = id2label(pred)
+                new_label = id2label[pred]
                 if pred != label:
                     relabel_cnt += 1
             else:
-                new_label = id2label(label)
+                new_label = id2label[label]
             new_labels[idx] = new_label
 
     data_dict = json.load(open(cur_data_path, 'r', encoding='utf-8'))
     for k, v in new_labels.items():
         try:
-            data_dict[k]['relation'] = v
+            data_dict[str(k)]['relation'] = v
         except KeyError:
             continue
 
     with open(filter_data_path, 'w', encoding='utf-8')as f:
-        json.dump(data_dict, f, fensure_ascii=False)
+        json.dump(data_dict, f, ensure_ascii=False)
 
     print("Current Filter Threshold={0:.5f}\tRelabeled Count={1}".format(dynamic_threshold, relabel_cnt))
     print("Filtered data saved to", filter_data_path)
@@ -133,6 +133,7 @@ def main(opt):
     not_best_count = 0
     best_F1 = -1
     best_epoch = -1
+    id2label = get_id2label(opt.label_path)
     for epoch in range(opt.epochs):
         model.train()
         print("\n=== Epoch %d train ===" % epoch)
@@ -155,15 +156,15 @@ def main(opt):
             pos_tot += (labels != 0).sum().item()
             pos_tp += ((pred == labels) & (labels != 0)).sum().item()
             # log
-            # if i % 500 == 0 or i == len(train_data_loader) - 1:
-            sys.stdout.write('\rstep: {0} / {1} | loss: {2:.5f}, acc: {3:.5f}, pos_acc: {4:.5f}'.
-                             format(i + 1,
-                                    len(train_data_loader),
-                                    epoch_loss / (i + 1) * opt.batch_size,
-                                    tp / ((i + 1) * opt.batch_size),
-                                    pos_tp / pos_tot if pos_tot != 0 else 0.0)
-                             )
-            sys.stdout.flush()
+            if i % 500 == 0 or i == len(train_data_loader) - 1:
+                sys.stdout.write('\rstep: {0} / {1} | loss: {2:.5f}, acc: {3:.5f}, pos_acc: {4:.5f}'.
+                                 format(i + 1,
+                                        len(train_data_loader),
+                                        epoch_loss / (i + 1) * opt.batch_size,
+                                        tp / ((i + 1) * opt.batch_size),
+                                        pos_tp / pos_tot if pos_tot != 0 else 0.0)
+                                 )
+                sys.stdout.flush()
             # Optimize
             loss.backward()
             optimizer.step()
@@ -172,7 +173,6 @@ def main(opt):
         if (pos_tp / pos_tot) >= 0.5:
             print("\n=== Epoch %d val ===" % epoch)
             metric_dicts, cnt_dicts = valid(test_loader, model)
-            id2label = get_id2label(opt.label_path)
             print_metrics(metric_dicts, id2label)
             micro_f, pos_micro_f = calculate_avg_F(cnt_dicts)
             print("MICRO F1={0:.5f}, POS_MICRO_F1={1:.5f}".format(micro_f, pos_micro_f))
