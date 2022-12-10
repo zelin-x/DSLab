@@ -46,7 +46,7 @@ if __name__ == '__main__':
     opt.model_name = model_name
     opt.model_path = "checkpoints/" + model_name
     opt.pr_curve_result_path = "result/" + model_name + ".txt"
-    opt.batch_size = 8
+    opt.batch_size = 32
 
     instance_loader = data_loader(opt.test_path, opt, shuffle=False)
     model = Net(opt)

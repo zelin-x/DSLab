@@ -1,3 +1,6 @@
+from tqdm import tqdm
+
+
 def get_label2id(label_path):
     l2i = {}
     with open(label_path, 'r', encoding='utf-8')as f:
@@ -104,7 +107,7 @@ def calculate_pr_curve_and_save(golden_list, pred_prob_list, class_num, save_cur
 
     def calculate_avg_pr_each_class_with_threshold(golden_list, pred_probs, classes_num, threshold):
         cnt_dicts = {i: {'tp': 0, 'fp': 0, 'fn': 0} for i in range(classes_num)}
-        for i in range(classes_num):
+        for i in tqdm(range(classes_num)):
             for j in range(len(golden_list)):
                 golden_y, pred_prob = golden_list[j], pred_probs[j]
                 pred_i_list = pred_prob[:, i]
