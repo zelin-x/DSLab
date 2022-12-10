@@ -1,9 +1,9 @@
 """
 SENT
 """
-
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import sys
 import numpy as np
 import transformers
@@ -50,6 +50,7 @@ def filter_and_relabel(model, _train_data_loader, id2label, cur_data_path, filte
                 data = [x.cuda() for x in data]
             idxes, labels = data[0], data[-1]
             out = model(data[1:-1])
+            out = F.softmax(out, dim=-1)
             prob, pred = torch.max(out, -1)
             total_idxes.append(idxes)
             total_labels.append(labels)
@@ -62,15 +63,9 @@ def filter_and_relabel(model, _train_data_loader, id2label, cur_data_path, filte
     new_labels = {}
     relabel_cnt = 0
     for i in range(len(total_idxes)):
-        idxes = total_idxes[i]
-        labels = total_labels[i]
-        preds = total_pred[i]
-        probs = total_prob[i]
+        idxes, labels, preds, probs = [_[i] for _ in (total_idxes, total_labels, total_pred, total_prob)]
         for j in range(len(idxes)):
-            idx = idxes[j].item()
-            label = labels[j].item()
-            pred = preds[j].item()
-            prob = probs[j].item()
+            idx, label, pred, prob = list(map(lambda x: x[j].item(), (idxes, labels, preds, probs)))
             if prob >= dynamic_threshold:
                 new_label = id2label[pred]
                 if pred != label:

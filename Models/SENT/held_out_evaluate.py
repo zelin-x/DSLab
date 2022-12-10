@@ -1,14 +1,14 @@
 import torch
 import torch.nn.functional as F
 from config import Config
-from data_loader_ins import instance_loader
+from data_loader import data_loader
 from utils import calculate_pr_curve_and_save
-from model import SEG
+from model import Net
 
 from tqdm import tqdm
 import os
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
 def held_out_evaluation(test_loader, model, opt):
@@ -22,8 +22,8 @@ def held_out_evaluation(test_loader, model, opt):
             if torch.cuda.is_available():
                 data = [x.cuda() for x in data]
             labels = data[-1]
-            out = model(data[:-1], infer=True)
-            prob = F.softmax(out, 1)      # (batch_size, classes_num)
+            out = model(data[1:-1], infer=True)
+            prob = F.softmax(out, 1)           # (batch_size, classes_num)
             _, pred = torch.max(out, dim=1)
 
             total += len(labels)
@@ -42,14 +42,14 @@ def held_out_evaluation(test_loader, model, opt):
 
 if __name__ == '__main__':
     opt = Config()
-    model_name = "model_2022_11_14_16_27_55.ckpt"
+    model_name = "model_2022_12_08_16_10_17.ckpt"
     opt.model_name = model_name
     opt.model_path = "checkpoints/" + model_name
     opt.pr_curve_result_path = "result/" + model_name + ".txt"
     opt.batch_size = 32
 
-    instance_loader = instance_loader(opt.test_path, opt, shuffle=False)
-    model = SEG(opt)
+    instance_loader = data_loader(opt.test_path, opt, shuffle=False)
+    model = Net(opt)
     if torch.cuda.is_available():
         model = model.cuda()
     model.load_state_dict(torch.load(opt.model_path))

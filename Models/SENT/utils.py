@@ -91,3 +91,49 @@ def print_metrics(metric_dicts, id2label: dict):
     for k, v in metric_:
         print(template.format(id2label[k], v['R'], v['P'], v['F'], v['Support']))
     print("=" * 2 + "Evaluating Result" + "=" * 2)
+
+
+def calculate_pr_curve_and_save(golden_list, pred_prob_list, class_num, save_curve_dir, interval=0.02) -> None:
+    """
+    :param golden_list: label
+    :param class_num: num of classes
+    :param pred_prob_list: the probability distribution of prediction (batch_size, classes_num)
+    :param save_curve_dir: Precision Recall curve save path
+    :param interval: calculate every threshold
+    """
+
+    def calculate_avg_pr_each_class_with_threshold(golden_list, pred_probs, classes_num, threshold):
+        cnt_dicts = {i: {'tp': 0, 'fp': 0, 'fn': 0} for i in range(classes_num)}
+        for i in range(classes_num):
+            for j in range(len(golden_list)):
+                golden_y, pred_prob = golden_list[j], pred_probs[j]
+                pred_i_list = pred_prob[:, i]
+                cnt_dicts[i]['tp'] += ((golden_y == i) & (pred_i_list >= threshold)).sum().item()
+                cnt_dicts[i]['fp'] += ((golden_y != i) & (pred_i_list >= threshold)).sum().item()
+                cnt_dicts[i]['fn'] += ((golden_y == i) & (pred_i_list < threshold)).sum().item()
+
+        total_recall = 0.0
+        total_precision = 0.0
+        for k, v in cnt_dicts.items():
+            if k == 0:
+                continue
+            tp, fn, fp = v['tp'], v['fn'], v['fp']
+            total_recall += tp / (tp + fn) if tp + fn != 0 else 1.
+            total_precision += tp / (tp + fp) if tp + fp != 0 else 1.
+
+        # without NA
+        recall = total_recall / (classes_num - 1)
+        precision = total_precision / (classes_num - 1)
+
+        return recall, precision
+
+    with open(save_curve_dir, "w", encoding="UTF-8")as f:
+        threshold = 0.0
+        while threshold < 1.0 + interval:
+            print("Current threshold is {0:.2f}".format(threshold))
+            recall, precision = calculate_avg_pr_each_class_with_threshold(golden_list,
+                                                                           pred_prob_list,
+                                                                           class_num,
+                                                                           threshold)
+            threshold += interval
+            f.write("{0:.5f}\t{1:.5f}\n".format(recall, precision))

@@ -32,7 +32,7 @@ class Config:
         self.lr = 2e-3
         self.weight_decay = 1e-5
         self.epochs = 64
-        self.batch_size = 128
+        self.batch_size = 8
         self.patients = 8
 
         self.M_epoch = 3   # filter and relabel after M epochs

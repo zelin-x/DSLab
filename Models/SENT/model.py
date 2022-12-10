@@ -8,7 +8,7 @@ from pytorch_pretrained_bert import BertModel
 class Net(nn.Module, ABC):
     def __init__(self, opt):
         """
-            Bert + BiLSTM + Ent-Pooling
+        Bert + BiLSTM + Ent-Pooling
         """
         super(Net, self).__init__()
         self.embedding = BertModel.from_pretrained(opt.pretrained_path)
