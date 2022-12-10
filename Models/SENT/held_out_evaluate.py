@@ -22,7 +22,7 @@ def held_out_evaluation(test_loader, model, opt):
             if torch.cuda.is_available():
                 data = [x.cuda() for x in data]
             labels = data[-1]
-            out = model(data[1:-1], infer=True)
+            out = model(data[1:-1])
             prob = F.softmax(out, 1)           # (batch_size, classes_num)
             _, pred = torch.max(out, dim=1)
 
@@ -46,7 +46,7 @@ if __name__ == '__main__':
     opt.model_name = model_name
     opt.model_path = "checkpoints/" + model_name
     opt.pr_curve_result_path = "result/" + model_name + ".txt"
-    opt.batch_size = 32
+    opt.batch_size = 8
 
     instance_loader = data_loader(opt.test_path, opt, shuffle=False)
     model = Net(opt)
