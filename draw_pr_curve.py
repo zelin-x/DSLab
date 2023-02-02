@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 
 pcnn_one_pr_curve_path = r"Models/PCNN+ONE/result/model_2022_11_07_10_24_37.ckpt.txt"
 seg_pr_curve_path = r"Models/SEG/result/model_2022_11_14_16_27_55.ckpt.txt"
+sent_pr_curve_path = r"Models/SENT/result/model_2022_12_08_16_10_17.ckpt.txt"
 
 x0s = []
 y0s = []
@@ -26,9 +27,25 @@ with open(seg_pr_curve_path, "r", encoding="UTF-8")as f:
             y1s.append(float(lin[1]))
 
 
+x2s = []
+y2s = []
+with open(sent_pr_curve_path, "r", encoding="UTF-8")as f:
+    for line in f:
+        lin = line.strip()
+        if lin:
+            lin = lin.split("\t")
+            x2s.append(float(lin[0]))
+            y2s.append(float(lin[1]))
+
+x2s.append(0)
+y2s.append(1)
+
+
+
 plt.figure()
 plt.plot(x0s[:], y0s[:], '-p', markersize=1.0, label="pcnn+one(baseline0)")
 plt.plot(x1s[:], y1s[:], '-p', markersize=1.0, label="pcnn+ent-att+pooling(baseline1)")
+plt.plot(x2s[:], y2s[:], '-p', markersize=1.0, label="lstm+ent-pooling+filter&relabeling")
 
 plt.legend()
 plt.show()
