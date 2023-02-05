@@ -135,12 +135,11 @@ class Net(nn.Module, ABC):
         return loss
 
     def forward(self, scope, input1, input2=None, labels=None, training=True):
-        token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks = input1
-        flat = lambda x: x.view(-1, x.size(-1))
-        token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks = [flat(_) for _ in input1]
-        batch_size, bag_size, max_len = token_idxes.size()
         if training:
             assert input2 is not None and labels is not None
+            flat = lambda x: x.view(-1, x.size(-1))
+            token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks = [flat(_) for _ in input1]
+            batch_size, bag_size, max_len = token_idxes.size()
             aug_token_idxes, aug_att_masks, aug_pos1es, aug_pos2es, aug_head_masks, aug_tail_masks = [flat(_) for _ in input2]
             # (batch_size, max_bag_size, max_len) -> (batch_size * max_bag_size, max_len)
             sent_reps = self.sent_encoder(token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks)
@@ -162,12 +161,12 @@ class Net(nn.Module, ABC):
         else:
             logits = []
             for idx, s in enumerate(scope):
+                token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks = [_[s[0]:s[1]] for _ in input1]
                 sent_reps = self.sent_encoder(token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks)
                 # (bag_instance_num, feature_size)
                 rels_embed = self.rel_embedding(torch.arange(self.classes_num).cuda())
                 # (classes_num, feature_size)
-                ins_reps = sent_reps[s[0]:s[1]]
-                bags_reps = Net.selective_attention(rels_embed, ins_reps, training=False)
+                bags_reps = Net.selective_attention(rels_embed, sent_reps, training=False)
                 # (classes_num, feature_size)
                 out = self.classifier(bags_reps)
                 # (classes_num, classes_num)
@@ -176,9 +175,3 @@ class Net(nn.Module, ABC):
                 logits.append(logit.view(1, -1))
             out = torch.cat(logits, dim=0)
             return out
-
-    def test_instance(self, x):
-        token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks = x
-        sent_reps = self.sent_encoder(token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks)
-        out = self.classifier(sent_reps)
-        return out

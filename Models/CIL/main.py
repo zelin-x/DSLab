@@ -1,134 +1,66 @@
 """
-SENT
+CIL
 """
+import sklearn
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.optim as optim
 import sys
 import numpy as np
 import transformers
 import os
 import random
-import json
 
 from model import Net
 from data_loader import data_loader
 from config import Config
-from utils import calculate_metrics, get_id2label, calculate_avg_F, print_metrics
+from utils import get_id2label
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
-def valid(test_loader, model):
-    model.eval()
-    pred_y = []
-    true_y = []
-    with torch.no_grad():
-        for i, data in enumerate(test_loader):
-            if torch.cuda.is_available():
-                data = [x.cuda() for x in data]
-            labels = data[-1]
-            out = model(data[1:-1])
-            _, pred = torch.max(out, -1)
-            pred, labels, _ = list(map(lambda x: x.data.cpu().numpy().tolist(), [pred, labels, _]))
-            pred_y += pred
-            true_y += labels
-
-    metric_dicts, cnt_dicts = calculate_metrics(true_y, pred_y, out.size(-1))
-
-    return metric_dicts, cnt_dicts
-
-
-def filter_and_relabel(model, _train_data_loader, id2label, cur_data_path, filter_data_path):
-    model.eval()
-    dynamic_threshold = 0.0
-    sample_num = 0
-    total_idxes, total_labels, total_pred, total_prob = [], [], [], []
-    with torch.no_grad():
-        for i, data in enumerate(_train_data_loader):
-            if torch.cuda.is_available():
-                data = [x.cuda() for x in data]
-            idxes, labels = data[0], data[-1]
-            out = model(data[1:-1])
-            out = F.softmax(out, dim=-1)
-            prob, pred = torch.max(out, -1)
-            total_idxes.append(idxes)
-            total_labels.append(labels)
-            total_pred.append(pred)
-            total_prob.append(prob)
-            dynamic_threshold += torch.sum(prob).item()
-            sample_num += out.size(0)
-
-    dynamic_threshold = dynamic_threshold / sample_num
-    new_labels = {}
-    relabel_cnt = 0
-    for i in range(len(total_idxes)):
-        idxes, labels, preds, probs = [_[i] for _ in (total_idxes, total_labels, total_pred, total_prob)]
-        for j in range(len(idxes)):
-            idx, label, pred, prob = list(map(lambda x: x[j].item(), (idxes, labels, preds, probs)))
-            if prob >= dynamic_threshold:
-                new_label = id2label[pred]
-                if pred != label:
-                    relabel_cnt += 1
-            else:
-                new_label = id2label[label]
-            new_labels[idx] = new_label
-
-    data_dict = json.load(open(cur_data_path, 'r', encoding='utf-8'))
-    for k, v in new_labels.items():
-        try:
-            data_dict[str(k)]['relation'] = v
-        except KeyError:
-            continue
-
-    with open(filter_data_path, 'w', encoding='utf-8')as f:
-        json.dump(data_dict, f, ensure_ascii=False)
-
-    print("Current Filter Threshold={0:.5f}\tRelabeled Count={1}".format(dynamic_threshold, relabel_cnt))
-    print("Filtered data saved to", filter_data_path)
-
-
-def main(opt):
+def train(train_data_loader, test_loader, opt):
     random.seed(opt.seed)
     os.environ['PYTHONHASHSEED'] = str(opt.seed)
     np.random.seed(opt.seed)
     torch.manual_seed(opt.seed)
     torch.cuda.manual_seed(opt.seed)
     torch.backends.cudnn.deterministic = True
+
     model = Net(opt)
 
     if torch.cuda.is_available():
         model = model.cuda()
 
     criterion = nn.CrossEntropyLoss()
-    bert_params = set(model.embedding.parameters())
-    other_params = list(set(model.parameters()) - bert_params)
-    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
-    param_optimizer = [
-        {'params': [p for n, p in model.embedding.named_parameters() if
-                    not any(nd in n for nd in no_decay)],
-         'lr': opt.bert_lr,
-         'weight_decay': 1e-3},
-        {'params': [p for n, p in model.embedding.named_parameters() if any(nd in n for nd in no_decay)],
-         'lr': 0.0,
-         'weight_decay': 0.0},
-        {'params': other_params,
-         'lr': opt.lr,
-         'weight_decay': 1e-3}
-    ]
-    optimizer = transformers.AdamW(param_optimizer, lr=opt.bert_lr, weight_decay=1e-3)
 
-    train_data_loader = data_loader(opt.train_path, opt, shuffle=True)
-    test_loader = data_loader(opt.test_path, opt, shuffle=False)
-
+    if opt.use_plm:
+        bert_params = set(model.sentence_encoder.embedding.parameters())
+        other_params = list(set(model.parameters()) - bert_params)
+        no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
+        param_optimizer = [
+            {'params': [p for n, p in model.sentence_encoder.embedding.named_parameters() if
+                        not any(nd in n for nd in no_decay)],
+             'lr': opt.bert_lr,
+             'weight_decay': 1e-5},
+            {'params': [p for n, p in model.sentence_encoder.embedding.named_parameters() if
+                        any(nd in n for nd in no_decay)],
+             'lr': 0.0,
+             'weight_decay': 0.0},
+            {'params': other_params,
+             'lr': opt.lr,
+             'weight_decay': 1e-5}
+        ]
+        optimizer = transformers.AdamW(param_optimizer, lr=opt.bert_lr, weight_decay=1e-5)
+    else:
+        optimizer = optim.SGD(model.parameters(), lr=opt.lr, weight_decay=opt.weight_decay)
     updates_total = len(train_data_loader) // opt.batch_size * opt.epochs
     scheduler = transformers.get_cosine_schedule_with_warmup(optimizer,
-                                                             num_warmup_steps=0.02 * updates_total,
+                                                             num_warmup_steps=0.2 * updates_total,
                                                              num_training_steps=updates_total)
     not_best_count = 0
-    best_F1 = -1
+    best_auc = -1
     best_epoch = -1
-    id2label = get_id2label(opt.label_path)
     for epoch in range(opt.epochs):
         model.train()
         print("\n=== Epoch %d train ===" % epoch)
@@ -136,13 +68,23 @@ def main(opt):
         tp = 0
         pos_tot = 0
         pos_tp = 0
+        global_step = 0  # warmup
         for i, data in enumerate(train_data_loader):
             if torch.cuda.is_available():
                 for d in range(len(data)):
                     data[d] = data[d].cuda()
-            labels = data[-1]
-            output = model(data[1:-1])
-            loss = criterion(output, labels)
+
+            scope, input1, input2, labels = data
+            output, cl_loss = model(scope, input1, input2, labels, training=True)
+            cl_loss = cl_loss.mean()
+            ce_loss = criterion(output, labels)
+
+            global_step += 1
+            warmup_steps = updates_total * 0.2
+            p = float(global_step) / (warmup_steps * 2.0)
+            alpha = 2. / (1. + np.exp(-2. * p)) - 1
+            loss = ce_loss + alpha * cl_loss * 10.0
+
             epoch_loss += loss.item()
             _, pred = torch.max(output, -1)
             # acc of all
@@ -150,31 +92,34 @@ def main(opt):
             # acc of not na
             pos_tot += (labels != 0).sum().item()
             pos_tp += ((pred == labels) & (labels != 0)).sum().item()
-            # log
-            if i % 500 == 0 or i == len(train_data_loader) - 1:
-                sys.stdout.write('\rstep: {0} / {1} | loss: {2:.5f}, acc: {3:.5f}, pos_acc: {4:.5f}'.
-                                 format(i + 1,
-                                        len(train_data_loader),
-                                        epoch_loss / (i + 1) * opt.batch_size,
-                                        tp / ((i + 1) * opt.batch_size),
-                                        pos_tp / pos_tot if pos_tot != 0 else 0.0)
-                                 )
-                sys.stdout.flush()
+            # Log
+            sys.stdout.write('\rstep: {0} / {1} | loss: {2:.5f}, acc: {3:.5f}, pos_acc: {4:.5f}'.
+                             format(i + 1,
+                                    len(train_data_loader),
+                                    epoch_loss / (i + 1) * opt.batch_size,
+                                    tp / ((i + 1) * opt.batch_size),
+                                    pos_tp / pos_tot if pos_tot != 0 else 0.0)
+                             )
+            sys.stdout.flush()
             # Optimize
             loss.backward()
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad()
+
         if (pos_tp / pos_tot) >= 0.5:
             print("\n=== Epoch %d val ===" % epoch)
-            metric_dicts, cnt_dicts = valid(test_loader, model)
-            print_metrics(metric_dicts, id2label)
-            micro_f, pos_micro_f = calculate_avg_F(cnt_dicts)
-            print("MICRO F1={0:.5f}, POS_MICRO_F1={1:.5f}".format(micro_f, pos_micro_f))
-            if pos_micro_f > best_F1:
+            id2rel = get_id2label(opt.label_path)
+            result = eval(test_loader, model, id2rel)
+            p = result['prec']
+            print("auc: %.4f f1: %.4f \n p@100: %.4f p@200: %.4f p@300: %.4f p@500: %.4f p@1000: %.4f p@2000: %.4f" % (
+                   result['auc'], result['f1'], p[100], p[200], p[300], p[500], p[1000], p[2000]))
+            if result['auc'] > best_auc:
                 print("Best result!")
-                best_F1 = pos_micro_f
+                best_auc = result['auc']
                 torch.save(model.state_dict(), opt.save_model_path)
+                np.save(opt.prec_save_path, result['prec'])
+                np.save(opt.rec_save_path, result['rec'])
                 not_best_count = 0
                 best_epoch = epoch
             else:
@@ -182,17 +127,54 @@ def main(opt):
             if not_best_count >= opt.patients:
                 print("Early stop!")
                 break
+    print('Finish training! The best epoch=' + str(best_epoch) + "The best F1=" + str(best_auc))
 
-        # filter and relabel
-        if epoch < opt.M_epoch:
-            continue
-        cur_data_path = opt.train_path if epoch == opt.M_epoch else opt.filter_train_path
-        filter_and_relabel(model, train_data_loader, id2label, cur_data_path, opt.filter_train_path)
-        train_data_loader = data_loader(opt.filter_train_path, opt, shuffle=True)
 
-    print('Finish training! The best epoch=' + str(best_epoch) + "The best F1=" + str(best_F1))
+def eval(test_loader, model, id2rel):
+    model.eval()
+    pred_result = []
+    with torch.no_grad():
+        for i, data in enumerate(test_loader):
+            if torch.cuda.is_available():
+                data = [x.cuda() for x in data]
+            scope, input, labels, ent_pairs = data
+            logits = model(scope, input1=input, training=False)
+            logits = logits.cpu().numpy()
+            label = label.cpu().numpy()
+            class_num = logits.size(-1)
+
+            for i in range(len(logits)):
+                for rid in range(class_num):
+                    if rid != 0:
+                        pred_result.append({
+                            'ent_pair': ent_pairs[i],
+                            'relation': id2rel[rid],
+                            'score': logits[i][rid]
+                        })
+    sorted_pred_result = sorted(pred_result, key=lambda x: x['score'], reverse=True)
+    prec, rec = [], []
+    correct = 0
+    facts = test_loader.dataset.facts
+    total = len(facts)
+    for i, item in enumerate(sorted_pred_result):
+        if (item['entpair'][0], item['entpair'][1], item['relation']) in facts:
+            correct += 1
+        prec.append(float(correct) / float(i + 1))
+        rec.append(float(correct) / float(total))
+
+    auc = sklearn.metrics.auc(x=rec, y=prec)
+    np_prec = np.array(prec)
+    np_rec = np.array(rec)
+    f1 = (2 * np_prec * np_rec / (np_prec + np_rec + 1e-20)).max()
+    mean_prec = np_prec.mean()
+
+    result = {'prec': np_prec, 'rec': np_rec, 'mean_prec': mean_prec, 'f1': f1, 'auc': auc}
+
+    return result
 
 
 if __name__ == '__main__':
     opt = Config()
-    main(opt)
+    train_loader = data_loader(opt.train_path, opt, shuffle=True, training=True)
+    test_loader = data_loader(opt.test_path, opt, shuffle=False, training=False)
+    train(train_loader, test_loader, opt)

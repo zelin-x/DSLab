@@ -8,6 +8,7 @@ class Config:
         """Data"""
         self.data_path = r"../../Data/bag_level/"
         self.train_path = self.data_path + "train.txt"
+        self.max_bag_size = 8
         self.test_path = self.data_path + "test.txt"
         self.label_path = self.data_path + "label.txt"
         self.PN_test_path = self.data_path + "PN_test.txt"

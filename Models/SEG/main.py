@@ -129,7 +129,7 @@ def valid(test_loader, model, use_plm=True):
             labels = data[-1]
             out = model(data[:-1], infer=False)
             _, pred = torch.max(out, -1)
-            pred, labels, _ = list(map(lambda x: x.data.cpu().numpy().tolist(), [pred, labels, _]))
+            pred, labels, _ = list(map(lambda x: x.bags.cpu().numpy().tolist(), [pred, labels, _]))
             pred_y += pred
             true_y += labels
 
