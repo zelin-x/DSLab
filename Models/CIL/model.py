@@ -83,9 +83,10 @@ class Net(nn.Module, ABC):
                                             opt.embedding_size,
                                             opt.hidden_size,
                                             opt.dropout_rate)
-        self.rel_embedding = nn.Embedding(opt.classes_num, opt.hidden_size * 2)
+        self.rel_embedding = nn.Embedding(opt.classes_num, opt.hidden_size * 4)
         self.dropout = nn.Dropout(opt.dropout_rate)
-        self.classifier = nn.Linear(opt.hidden_size * 2, opt.classes_num)
+        self.classes_num = opt.classes_num
+        self.classifier = nn.Linear(opt.hidden_size * 4, opt.classes_num)
 
     @staticmethod
     def selective_attention(query, key, training=True):
@@ -134,12 +135,12 @@ class Net(nn.Module, ABC):
         loss = loss.mean()
         return loss
 
-    def forward(self, scope, input1, input2=None, labels=None, training=True):
+    def forward(self, scope, input1, input2=None, labels=None, training=True, temperature=None):
+        flat = lambda x: x.view(-1, x.size(-1))
         if training:
             assert input2 is not None and labels is not None
-            flat = lambda x: x.view(-1, x.size(-1))
+            batch_size, bag_size, max_len = input1[0].size()
             token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks = [flat(_) for _ in input1]
-            batch_size, bag_size, max_len = token_idxes.size()
             aug_token_idxes, aug_att_masks, aug_pos1es, aug_pos2es, aug_head_masks, aug_tail_masks = [flat(_) for _ in input2]
             # (batch_size, max_bag_size, max_len) -> (batch_size * max_bag_size, max_len)
             sent_reps = self.sent_encoder(token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks)
@@ -156,22 +157,22 @@ class Net(nn.Module, ABC):
             bag_out = self.classifier(self.dropout(bag_reps))
             sent_reps = sent_reps.view(batch_size, bag_size, -1)
             aug_sent_reps = aug_sent_reps.view(batch_size, bag_size, -1)
-            cl_loss = Net.cl(sent_reps, aug_sent_reps, bag_reps)
+            cl_loss = Net.cl(sent_reps, aug_sent_reps, bag_reps, temperature)
             return bag_out, cl_loss
         else:
             logits = []
+            token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks = [flat(_) for _ in input1]
+            sent_reps = self.sent_encoder(token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks)
             for idx, s in enumerate(scope):
-                token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks = [_[s[0]:s[1]] for _ in input1]
-                sent_reps = self.sent_encoder(token_idxes, att_masks, pos1es, pos2es, head_masks, tail_masks)
+                ins_reps = sent_reps[s[0]:s[1]]
                 # (bag_instance_num, feature_size)
                 rels_embed = self.rel_embedding(torch.arange(self.classes_num).cuda())
                 # (classes_num, feature_size)
-                bags_reps = Net.selective_attention(rels_embed, sent_reps, training=False)
+                bags_reps = Net.selective_attention(rels_embed, ins_reps, training=False)
                 # (classes_num, feature_size)
                 out = self.classifier(bags_reps)
                 # (classes_num, classes_num)
-                out = F.softmax(out, dim=-1).diag()  # line first
-                logit = torch.sum(out, dim=-1)
+                logit = F.softmax(out, dim=-1).diag()  # line first
                 logits.append(logit.view(1, -1))
             out = torch.cat(logits, dim=0)
             return out

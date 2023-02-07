@@ -10,7 +10,7 @@ class Config:
         self.train_path = self.data_path + "aug_train.json"
         self.test_path = self.data_path + "test.json"
         self.label_path = self.data_path + "label.txt"
-        self.max_bag_size = 12
+        self.max_bag_size = 8
 
         """Embeddings"""
         self.pretrained_path = r"../../PLMs/bert_based_chinese/"
@@ -32,7 +32,8 @@ class Config:
         self.lr = 2e-3
         self.weight_decay = 1e-5
         self.epochs = 64
-        self.batch_size = 128
+        self.temperature = 0.05
+        self.batch_size = 2
         self.patients = 8
 
         """checkpoints and result"""

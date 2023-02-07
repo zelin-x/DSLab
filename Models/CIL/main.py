@@ -19,7 +19,7 @@ from utils import get_id2label
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 
-def train(train_data_loader, test_loader, opt):
+def train(train_loader, test_loader, opt):
     random.seed(opt.seed)
     os.environ['PYTHONHASHSEED'] = str(opt.seed)
     np.random.seed(opt.seed)
@@ -34,27 +34,25 @@ def train(train_data_loader, test_loader, opt):
 
     criterion = nn.CrossEntropyLoss()
 
-    if opt.use_plm:
-        bert_params = set(model.sentence_encoder.embedding.parameters())
-        other_params = list(set(model.parameters()) - bert_params)
-        no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
-        param_optimizer = [
-            {'params': [p for n, p in model.sentence_encoder.embedding.named_parameters() if
-                        not any(nd in n for nd in no_decay)],
-             'lr': opt.bert_lr,
-             'weight_decay': 1e-5},
-            {'params': [p for n, p in model.sentence_encoder.embedding.named_parameters() if
-                        any(nd in n for nd in no_decay)],
-             'lr': 0.0,
-             'weight_decay': 0.0},
-            {'params': other_params,
-             'lr': opt.lr,
-             'weight_decay': 1e-5}
-        ]
-        optimizer = transformers.AdamW(param_optimizer, lr=opt.bert_lr, weight_decay=1e-5)
-    else:
-        optimizer = optim.SGD(model.parameters(), lr=opt.lr, weight_decay=opt.weight_decay)
-    updates_total = len(train_data_loader) // opt.batch_size * opt.epochs
+    bert_params = set(model.sent_encoder.embedding.parameters())
+    other_params = list(set(model.parameters()) - bert_params)
+    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
+    param_optimizer = [
+        {'params': [p for n, p in model.sent_encoder.embedding.named_parameters() if
+                    not any(nd in n for nd in no_decay)],
+         'lr': opt.bert_lr,
+         'weight_decay': 1e-5},
+        {'params': [p for n, p in model.sent_encoder.embedding.named_parameters() if
+                    any(nd in n for nd in no_decay)],
+         'lr': 0.0,
+         'weight_decay': 0.0},
+        {'params': other_params,
+         'lr': opt.lr,
+         'weight_decay': 1e-5}
+    ]
+    optimizer = transformers.AdamW(param_optimizer, lr=opt.bert_lr, weight_decay=1e-5)
+
+    updates_total = len(train_loader) // opt.batch_size * opt.epochs
     scheduler = transformers.get_cosine_schedule_with_warmup(optimizer,
                                                              num_warmup_steps=0.2 * updates_total,
                                                              num_training_steps=updates_total)
@@ -69,13 +67,14 @@ def train(train_data_loader, test_loader, opt):
         pos_tot = 0
         pos_tp = 0
         global_step = 0  # warmup
-        for i, data in enumerate(train_data_loader):
+        for i, data in enumerate(train_loader):
             if torch.cuda.is_available():
-                for d in range(len(data)):
-                    data[d] = data[d].cuda()
-
-            scope, input1, input2, labels = data
-            output, cl_loss = model(scope, input1, input2, labels, training=True)
+                scope, input1, input2, labels = data
+                scope = scope.cuda()
+                input1 = [_.cuda() for _ in input1]
+                input2 = [_.cuda() for _ in input2]
+                labels = labels.cuda()
+            output, cl_loss = model(scope, input1, input2, labels, training=True, temperature=opt.temperature)
             cl_loss = cl_loss.mean()
             ce_loss = criterion(output, labels)
 
@@ -95,7 +94,7 @@ def train(train_data_loader, test_loader, opt):
             # Log
             sys.stdout.write('\rstep: {0} / {1} | loss: {2:.5f}, acc: {3:.5f}, pos_acc: {4:.5f}'.
                              format(i + 1,
-                                    len(train_data_loader),
+                                    len(train_loader),
                                     epoch_loss / (i + 1) * opt.batch_size,
                                     tp / ((i + 1) * opt.batch_size),
                                     pos_tp / pos_tot if pos_tot != 0 else 0.0)
@@ -113,7 +112,7 @@ def train(train_data_loader, test_loader, opt):
             result = eval(test_loader, model, id2rel)
             p = result['prec']
             print("auc: %.4f f1: %.4f \n p@100: %.4f p@200: %.4f p@300: %.4f p@500: %.4f p@1000: %.4f p@2000: %.4f" % (
-                   result['auc'], result['f1'], p[100], p[200], p[300], p[500], p[1000], p[2000]))
+                result['auc'], result['f1'], p[100], p[200], p[300], p[500], p[1000], p[2000]))
             if result['auc'] > best_auc:
                 print("Best result!")
                 best_auc = result['auc']
@@ -135,13 +134,14 @@ def eval(test_loader, model, id2rel):
     pred_result = []
     with torch.no_grad():
         for i, data in enumerate(test_loader):
-            if torch.cuda.is_available():
-                data = [x.cuda() for x in data]
             scope, input, labels, ent_pairs = data
+            if torch.cuda.is_available():
+                scope = scope.cuda()
+                input = [_.cuda() for _ in input]
             logits = model(scope, input1=input, training=False)
-            logits = logits.cpu().numpy()
-            label = label.cpu().numpy()
             class_num = logits.size(-1)
+            logits = logits.cpu().numpy()
+            # labels = labels.cpu().numpy()
 
             for i in range(len(logits)):
                 for rid in range(class_num):
@@ -157,7 +157,7 @@ def eval(test_loader, model, id2rel):
     facts = test_loader.dataset.facts
     total = len(facts)
     for i, item in enumerate(sorted_pred_result):
-        if (item['entpair'][0], item['entpair'][1], item['relation']) in facts:
+        if (item['ent_pair'][0], item['ent_pair'][1], item['relation']) in facts:
             correct += 1
         prec.append(float(correct) / float(i + 1))
         rec.append(float(correct) / float(total))

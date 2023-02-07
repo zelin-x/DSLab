@@ -106,21 +106,27 @@ class Dataset(data.Dataset):
     def __getitem__(self, idx):
         bag = self.bags[idx]
         label = bag[0][-1]
-        bag = list(zip(*bag))
         if self.training:
-            if len(bag) >= self.max_bag_size:
-                resize_bag = random.sample(bag, self.max_bag_size)
+            bag_size = len(bag)
+            if bag_size >= self.max_bag_size:
+                np.random.shuffle(bag)
+                resize_bag = bag[:self.max_bag_size]
             else:
-                resize_bag = bag + list(np.random.choice(bag, self.max_bag_size - len(bag)))
+                resize_bag = []
+                while len(resize_bag) < self.max_bag_size:
+                    resize_bag.append(bag[np.random.randint(0, bag_size)])
             bag = resize_bag
+            bag = [ins[:-1] for ins in bag]   # without label
+            bag = list(zip(*bag))
             token_idx, att_mask, pos1s, pos2s, head_mask, tail_mask, \
             aug_token_idx, aug_att_mask, aug_pos1s, aug_pos2s, aug_head_mask, aug_tail_mask = [
-                torch.tensor(d, dtype=torch.long).unsqueeze(0) for d in bag[:-1]]
+                torch.tensor(d, dtype=torch.long).unsqueeze(0) for d in bag]
             label = torch.tensor(label, dtype=torch.long)
             return token_idx, att_mask, pos1s, pos2s, head_mask, tail_mask, aug_token_idx, aug_att_mask, aug_pos1s, aug_pos2s, aug_head_mask, aug_tail_mask, label
         else:
-            ent_pair = self.bag_names[idx]
-            token_idx, att_mask, pos1s, pos2s, head_mask, tail_mask = [torch.tensor(d, dtype=torch.long).unsqueeze(0) for d in bag[:-1]]
+            bag = list(zip(*bag))
+            ent_pair = (self.bag_names[idx][0], self.bag_names[idx][1])
+            token_idx, att_mask, pos1s, pos2s, head_mask, tail_mask = [torch.tensor(d, dtype=torch.long) for d in bag[:-1]]
             label = torch.tensor(label, dtype=torch.long)
             return token_idx, att_mask, pos1s, pos2s, head_mask, tail_mask, label, ent_pair
 
@@ -147,8 +153,8 @@ def train_collate_fn(X):
     scope = []  # 用来分包
     ind = 0
     for w in X[0]:
-        scope.append((ind, ind + len(w)))
-        ind += len(w)
+        scope.append((ind, ind + w.size(1)))
+        ind += w.size(1)
     scope = torch.tensor(scope, dtype=torch.long)
     input1, input2, labels = X[:6], X[6:-1], X[-1]
     input1 = [torch.cat(_, 0) for _ in input1]
