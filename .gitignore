@@ -9,5 +9,4 @@ test.py
 *.log
 *.ckpt
 *.pth
-*.npy
 !empty.txt
