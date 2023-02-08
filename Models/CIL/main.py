@@ -1,7 +1,7 @@
 """
 CIL
 """
-import sklearn
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -10,13 +10,14 @@ import numpy as np
 import transformers
 import os
 import random
+from sklearn.metrics import auc
 
 from model import Net
 from data_loader import data_loader
 from config import Config
 from utils import get_id2label
 
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = '2'
 
 
 def train(train_loader, test_loader, opt):
@@ -126,14 +127,14 @@ def train(train_loader, test_loader, opt):
             if not_best_count >= opt.patients:
                 print("Early stop!")
                 break
-    print('Finish training! The best epoch=' + str(best_epoch) + "The best F1=" + str(best_auc))
+    print('Finish training! The best epoch=' + str(best_epoch) + "The best auc=" + str(best_auc))
 
 
 def eval(test_loader, model, id2rel):
     model.eval()
     pred_result = []
     with torch.no_grad():
-        for i, data in enumerate(test_loader):
+        for idx, data in enumerate(test_loader):
             scope, input, labels, ent_pairs = data
             if torch.cuda.is_available():
                 scope = scope.cuda()
@@ -141,7 +142,6 @@ def eval(test_loader, model, id2rel):
             logits = model(scope, input1=input, training=False)
             class_num = logits.size(-1)
             logits = logits.cpu().numpy()
-            # labels = labels.cpu().numpy()
 
             for i in range(len(logits)):
                 for rid in range(class_num):
@@ -162,13 +162,13 @@ def eval(test_loader, model, id2rel):
         prec.append(float(correct) / float(i + 1))
         rec.append(float(correct) / float(total))
 
-    auc = sklearn.metrics.auc(x=rec, y=prec)
+    _auc = auc(x=rec, y=prec)
     np_prec = np.array(prec)
     np_rec = np.array(rec)
     f1 = (2 * np_prec * np_rec / (np_prec + np_rec + 1e-20)).max()
     mean_prec = np_prec.mean()
 
-    result = {'prec': np_prec, 'rec': np_rec, 'mean_prec': mean_prec, 'f1': f1, 'auc': auc}
+    result = {'prec': np_prec, 'rec': np_rec, 'mean_prec': mean_prec, 'f1': f1, 'auc': _auc}
 
     return result
 
