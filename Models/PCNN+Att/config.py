@@ -42,7 +42,7 @@ class Config:
         self.lr = 2e-3
         self.weight_decay = 1e-5
         self.epochs = 64
-        self.batch_size = 64
+        self.batch_size = 2
         self.patients = 5
 
         """checkpoints and result"""
@@ -51,7 +51,8 @@ class Config:
                           datetime.now().strftime('%Y-%m-%d-%H:%M:%S').replace('-', '_').replace(':', '_') + ".ckpt"
         self.save_model_path = r"checkpoints/" + self.model_name
 
-        self.pr_curve_result_path = r"result/" + self.model_name + '.txt'
+        self.prec_save_path = r"pr_curves/" + self.model_name + '_prec.npy'
+        self.rec_save_path = r"pr_curves/" + self.model_name + '_rec.npy'
 
     def __str__(self):
         ans = ""

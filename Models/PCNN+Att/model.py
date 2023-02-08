@@ -100,38 +100,31 @@ class PCNN_Att(nn.Module, ABC):
         return value
 
     def forward(self, Xs, training=True):
-        scope, token_idxes, att_masks, pos1es, pos2es, pos_masks, labels = Xs
+        scope, labels = Xs[0], Xs[-1]
+        flat = lambda x: x.view(-1, x.size(-1))
+        token_idxes, att_masks, pos1es, pos2es, pos_masks = [flat(_) for _ in Xs[1:-1]]
+        ins_reps = self.sentence_encoder(token_idxes, att_masks, pos1es, pos2es, pos_masks)
         if training:
             """training:has relation label for query"""
             bags_feature = []
             for idx, s in enumerate(scope):
-                w, m, p1, p2, pm = list(map(lambda x: x[s[0]:s[1]], [_ for _ in Xs[1:-1]]))
                 rel = labels[idx]
-                ins_features = self.sentence_encoder(w, m, p1, p2, pm)  # (bag_instance_num, feature_size)
+                ins_features = ins_reps[s[0]:s[1]]  # (bag_instance_num, feature_size)
                 rel_embed = self.rel_embedding(rel)  # (feature_size, )
-                _bags_feature = PCNN_Att.selective_attention(rel_embed, ins_features, training=training)    # (1, feature_size)
+                _bags_feature = PCNN_Att.selective_attention(rel_embed, ins_features, training=True)    # (1, feature_size)
                 bags_feature.append(_bags_feature)
             out = torch.cat(bags_feature, dim=0)
-            # out = self.dropout(batch_bags_feature)
             out = self.classifier(out)
         else:
             """inference:has no relation label for query"""
             logits = []
             for idx, s in enumerate(scope):
-                w, m, p1, p2, pm = list(map(lambda x: x[s[0]:s[1]], [_ for _ in Xs[1:-1]]))
-                ins_features = self.sentence_encoder(w, m, p1, p2, pm)  # (bag_instance_num, feature_size)
+                ins_features = ins_reps[s[0]:s[1]]  # (bag_instance_num, feature_size)
                 rels_embed = self.rel_embedding(torch.arange(self.classes_num).cuda())  # (classes_num, feature_size)
-                _bags_feature = PCNN_Att.selective_attention(rels_embed, ins_features, training=training)  # (classes_num, feature_size)
-                _out = self.classifier(_bags_feature)   # (classes_num, classes_num)
-                _out = F.softmax(_out, dim=-1)          # line first
-                _out = _out * torch.eye(self.classes_num, dtype=torch.float32).cuda()
-                logit = torch.sum(_out, dim=-1)
+                bags_reps = PCNN_Att.selective_attention(rels_embed, ins_reps, training=False)  # (classes_num, feature_size)
+                _out = self.classifier(bags_reps)   # (classes_num, classes_num)
+                out = F.softmax(_out, dim=-1)      # line first
+                logit = F.softmax(out, dim=-1).diag()
                 logits.append(logit.view(1, -1))
             out = torch.cat(logits, dim=0)
-        return out
-
-    def test_instance(self, Xs):
-        token_idxes, att_masks, pos1es, pos2es, pos_masks = Xs
-        out = self.sentence_encoder(token_idxes, att_masks, pos1es, pos2es, pos_masks)
-        out = self.classifier(out)
         return out

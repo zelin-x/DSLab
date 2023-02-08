@@ -1,7 +1,6 @@
 """
 PCNN + ONE
 """
-import sklearn
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -11,6 +10,7 @@ import numpy as np
 import transformers
 import os
 import random
+from sklearn.metrics import auc
 
 from model import PCNN_ONE
 from data_loader import data_loader
@@ -204,8 +204,8 @@ def eval(test_loader, model, id2rel, use_plm=True):
                 pm = pos_masks[s[0]:s[1]]
                 out = model(w, m, p1, p2, pm, use_plm)
                 out = F.softmax(out, -1)
-                logits, max_ins_label = torch.max(out, 1)
-                class_num = logits.size(-1)
+                logits, max_ins_label = torch.max(out, 0)
+                class_num = out.size(-1)
                 logits = logits.cpu().numpy()
 
                 for rid in range(class_num):
@@ -227,12 +227,12 @@ def eval(test_loader, model, id2rel, use_plm=True):
         prec.append(float(correct) / float(i + 1))
         rec.append(float(correct) / float(total))
 
-    auc = sklearn.metrics.auc(x=rec, y=prec)
+    _auc = auc(x=rec, y=prec)
     np_prec = np.array(prec)
     np_rec = np.array(rec)
     f1 = (2 * np_prec * np_rec / (np_prec + np_rec + 1e-20)).max()
     mean_prec = np_prec.mean()
-    result = {'prec': np_prec, 'rec': np_rec, 'mean_prec': mean_prec, 'f1': f1, 'auc': auc}
+    result = {'prec': np_prec, 'rec': np_rec, 'mean_prec': mean_prec, 'f1': f1, 'auc': _auc}
 
     return result
 

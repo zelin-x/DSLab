@@ -43,8 +43,8 @@ class SEG(nn.Module, ABC):
         B = torch.stack(B)
         return B
 
-    def forward(self, Xs, infer=False):
-        if not infer:
+    def forward(self, Xs, training=True):
+        if training:
             scope, token_idxes, att_masks, e1_masks, e2_masks, pos1es, pos2es, pos_masks = Xs
         else:
             scope, (token_idxes, att_masks, e1_masks, e2_masks, pos1es, pos2es, pos_masks) = None, Xs
