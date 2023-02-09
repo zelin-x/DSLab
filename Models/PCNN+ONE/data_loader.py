@@ -18,8 +18,6 @@ class Dataset(data.Dataset):
         self.training = training
         self.limit_size = opt.limit_size
         self.bags = []
-        self.bag_names = []
-        self.facts = set()
         if self.use_plm:
             self.char2id = Dataset.build_bert_vocab(opt.pretrained_vocab_path)
             self._plm_preprocess()
@@ -118,11 +116,6 @@ class Dataset(data.Dataset):
             lines = [_.strip() for _ in f]
             for index, lin in enumerate(lines):
                 if len(lin.split('\t')) == 3:
-                    head, tail, rel = lin.split('\t')
-                    bag_name = (head, tail, rel)
-                    self.bag_names.append(bag_name)
-                    if bag_name not in self.facts:
-                        self.facts.add(bag_name)
                     if index != 0 and len(token_idxes) != 0:
                         bag = [token_idxes, att_masks, pos1ses, pos2ses, pos_masks, labels]
                         self.bags.append(bag)
@@ -186,14 +179,14 @@ class Dataset(data.Dataset):
 
     def __getitem__(self, index):
         bag = self.bags[index]
-        bag_name = self.bag_names[index]
         token_idxes, att_masks, pos1es, pos2es, pos_masks, labels = \
             list(map(lambda x: torch.tensor(x, dtype=torch.long), bag))
         label = labels[0]
-        if self.training:
-            return token_idxes, att_masks, pos1es, pos2es, pos_masks, label
-        else:
-            return token_idxes, att_masks, pos1es, pos2es, pos_masks, label, bag_name
+        if not self.training:
+            label_one_hot = torch.zeros(len(self.label2id), dtype=torch.long)
+            label_one_hot[label] = 1
+            label = label_one_hot
+        return token_idxes, att_masks, pos1es, pos2es, pos_masks, label
 
     def loss_weight(self):
         print("Calculating the class weight")
@@ -209,9 +202,9 @@ class Dataset(data.Dataset):
         return class_weight
 
 
-def train_collate_fn(X):
+def collate_fn(X):
     X = list(zip(*X))  # 解压
-    token_idxes, att_masks, pos1es, pos2es, pos_masks, label = X
+    token_idxes, att_masks, pos1es, pos2es, pos_masks, labels = X
     scope = []  # 用来分包
     ind = 0
     for w in token_idxes:
@@ -224,34 +217,13 @@ def train_collate_fn(X):
     pos1es = torch.cat(pos1es, 0)
     pos2es = torch.cat(pos2es, 0)
     pos_masks = torch.cat(pos_masks, 0)
-    labels = torch.stack(label)
+    labels = torch.stack(labels)
 
     return scope, token_idxes, att_masks, pos1es, pos2es, pos_masks, labels
 
 
-def eval_collate_fn(X):
-    X = list(zip(*X))  # 解压
-    token_idxes, att_masks, pos1es, pos2es, pos_masks, label, bag_names = X
-    scope = []  # 用来分包
-    ind = 0
-    for w in token_idxes:
-        scope.append((ind, ind + len(w)))
-        ind += len(w)
-
-    scope = torch.tensor(scope, dtype=torch.long)
-    token_idxes = torch.cat(token_idxes, 0)
-    att_masks = torch.cat(att_masks, 0)
-    pos1es = torch.cat(pos1es, 0)
-    pos2es = torch.cat(pos2es, 0)
-    pos_masks = torch.cat(pos_masks, 0)
-    labels = torch.stack(label)
-
-    return scope, token_idxes, att_masks, pos1es, pos2es, pos_masks, labels, bag_names
-
-
 def data_loader(data_file, opt, shuffle, training=True, num_workers=0):
     dataset = Dataset(data_file, opt, training=training)
-    collate_fn = train_collate_fn if training else eval_collate_fn
     loader = data.DataLoader(dataset=dataset,
                              batch_size=opt.batch_size,
                              shuffle=shuffle,

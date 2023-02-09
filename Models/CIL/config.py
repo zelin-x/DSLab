@@ -33,7 +33,7 @@ class Config:
         self.weight_decay = 1e-5
         self.epochs = 64
         self.temperature = 0.05
-        self.batch_size = 16
+        self.batch_size = 12
         self.patients = 8
 
         """checkpoints and result"""

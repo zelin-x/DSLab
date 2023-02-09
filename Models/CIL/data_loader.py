@@ -22,7 +22,6 @@ class Dataset(data.Dataset):
         self.limit_size = opt.limit_size
         self.char2id = build_bert_vocab(opt.pretrained_vocab_path)
         self.bags = []
-        self.bag_names = []
         self.facts = {}
         self._preprocess()
 
@@ -97,7 +96,6 @@ class Dataset(data.Dataset):
                             [token_idx, att_mask, pos1s, pos2s, head_mask, tail_mask, label])
                     else:
                         self.facts[fact] = len(self.facts)
-                        self.bag_names.append(fact)
                         self.bags.append([[token_idx, att_mask, pos1s, pos2s, head_mask, tail_mask, label]])
 
     def __len__(self):
@@ -125,27 +123,12 @@ class Dataset(data.Dataset):
             return token_idx, att_mask, pos1s, pos2s, head_mask, tail_mask, aug_token_idx, aug_att_mask, aug_pos1s, aug_pos2s, aug_head_mask, aug_tail_mask, label
         else:
             bag = list(zip(*bag))
-            ent_pair = (self.bag_names[idx][0], self.bag_names[idx][1])
             token_idx, att_mask, pos1s, pos2s, head_mask, tail_mask = [torch.tensor(d, dtype=torch.long) for d in bag[:-1]]
-            label = torch.tensor(label, dtype=torch.long)
-            return token_idx, att_mask, pos1s, pos2s, head_mask, tail_mask, label, ent_pair
-
-    def eval(self, pred_result):
-        sorted_pred_result = sorted(pred_result, key=lambda x: x['score'], reverse=True)
-        prec, rec = [], []
-        correct = 0
-        total = len(self.facts)
-        for i, item in enumerate(sorted_pred_result):
-            if (item['entpair'][0], item['entpair'][1], self.rel2id[item['relation']]) in self.facts:
-                correct += 1
-            prec.append(float(correct) / float(i + 1))
-            rec.append(float(correct) / float(total))
-        auc = sklearn.metrics.auc(x=rec, y=prec)
-        np_prec = np.array(prec)
-        np_rec = np.array(rec)
-        f1 = (2 * np_prec * np_rec / (np_prec + np_rec + 1e-20)).max()
-        mean_prec = np_prec.mean()
-        return {'prec': np_prec, 'rec': np_rec, 'mean_prec': mean_prec, 'f1': f1, 'auc': auc}
+            # label = torch.tensor(label, dtype=torch.long)
+            label_one_hot = torch.zeros(len(self.label2id), dtype=torch.long)
+            label_one_hot[label] = 1
+            label = label_one_hot
+            return token_idx, att_mask, pos1s, pos2s, head_mask, tail_mask, label
 
 
 def train_collate_fn(X):
@@ -171,10 +154,10 @@ def eval_collate_fn(X):
         scope.append((ind, ind + len(w)))
         ind += len(w)
     scope = torch.tensor(scope, dtype=torch.long)
-    input, labels, ent_pairs = X[:6], X[-2], X[-1]
+    input, labels = X[:6], X[-1]
     input = [torch.cat(_) for _ in input]
     labels = torch.stack(labels)
-    return scope, input, labels, ent_pairs
+    return scope, input, labels
 
 
 def data_loader(data_file, opt, shuffle=True, training=True, num_workers=0):

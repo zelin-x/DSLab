@@ -10,7 +10,7 @@ import numpy as np
 import transformers
 import os
 import random
-from sklearn.metrics import auc
+from sklearn.metrics import average_precision_score
 
 from model import PCNN_ONE
 from data_loader import data_loader
@@ -84,14 +84,15 @@ def train(train_data_loader, test_loader, opt):
             pos_tot += (labels != 0).sum().item()
             pos_tp += ((pred == labels) & (labels != 0)).sum().item()
             # Log
-            sys.stdout.write('\rstep: {0} / {1} | loss: {2:.5f}, acc: {3:.5f}, pos_acc: {4:.5f}'.
-                             format(i + 1,
-                                    len(train_data_loader),
-                                    epoch_loss / (i + 1) * opt.batch_size,
-                                    tp / ((i + 1) * opt.batch_size),
-                                    pos_tp / pos_tot if pos_tot != 0 else 0.0)
-                             )
-            sys.stdout.flush()
+            if (i + 1) % 500 == 0:
+                sys.stdout.write('\rstep: {0} / {1} | loss: {2:.5f}, acc: {3:.5f}, pos_acc: {4:.5f}'.
+                                 format(i + 1,
+                                        len(train_data_loader),
+                                        epoch_loss / (i + 1) * opt.batch_size,
+                                        tp / ((i + 1) * opt.batch_size),
+                                        pos_tp / pos_tot if pos_tot != 0 else 0.0)
+                                 )
+                sys.stdout.flush()
             # Optimize
             loss.backward()
             optimizer.step()
@@ -104,8 +105,9 @@ def train(train_data_loader, test_loader, opt):
             result = eval(test_loader, model, id2rel)
             p = result['prec']
             print(
-                "auc: %.4f f1: %.4f \n p@100: %.4f p@200: %.4f p@300: %.4f p@500: %.4f p@1000: %.4f p@2000: %.4f" % (
-                    result['auc'], result['f1'], p[100], p[200], p[300], p[500], p[1000], p[2000]))
+                "auc: %.4f \n p@100: %.4f p@200: %.4f p@300: %.4f pmean:%.4f" %
+                (result['auc'], result['p100'], result['p200'], result['p300'], result['pmean'])
+            )
             if result['auc'] > best_auc:
                 print("Best result!")
                 best_auc = result['auc']
@@ -189,12 +191,12 @@ def valid(test_loader, model, use_plm=True):
 
 def eval(test_loader, model, id2rel, use_plm=True):
     model.eval()
-    pred_result = []
+    y_true = []
+    y_pred = []
     with torch.no_grad():
         for idx, data in enumerate(test_loader):
-            ent_pairs = data[-1]
             if torch.cuda.is_available():
-                data = [x.cuda() for x in data[:-1]]
+                data = [x.cuda() for x in data]
             scope, token_idxes, att_masks, pos1es, pos2es, pos_masks, labels = data
             for i, s in enumerate(scope):
                 w = token_idxes[s[0]:s[1]]
@@ -204,35 +206,34 @@ def eval(test_loader, model, id2rel, use_plm=True):
                 pm = pos_masks[s[0]:s[1]]
                 out = model(w, m, p1, p2, pm, use_plm)
                 out = F.softmax(out, -1)
-                logits, max_ins_label = torch.max(out, 0)
-                class_num = out.size(-1)
-                logits = logits.cpu().numpy()
+                logits, max_ins_label = torch.max(out, 0)  # (class_num, )
+                y_true.append(labels[i][1:].view(1, -1))
+                y_pred.append(logits[1:].view(1, -1))
+        y_true = torch.cat(y_true).reshape(-1).detach().cpu().numpy()
+        y_pred = torch.cat(y_pred).reshape(-1).detach().cpu().numpy()
+    # AUC
+    auc = average_precision_score(y_true, y_pred)  # PR-AUC
 
-                for rid in range(class_num):
-                    if rid != 0:
-                        pred_result.append({
-                            'ent_pair': ent_pairs[i],
-                            'relation': id2rel[rid],
-                            'score': logits[rid]
-                        })
+    # P@N
+    order = np.argsort(-y_pred)
+    p100 = (y_true[order[:100]]).mean() * 100
+    p200 = (y_true[order[:200]]).mean() * 100
+    p300 = (y_true[order[:300]]).mean() * 100
+    pmean = (p100 + p200 + p300) / 3
 
-    sorted_pred_result = sorted(pred_result, key=lambda x: x['score'], reverse=True)
-    prec, rec = [], []
-    correct = 0
-    facts = test_loader.dataset.facts
-    total = len(facts)
-    for i, item in enumerate(sorted_pred_result):
-        if (item['ent_pair'][0], item['ent_pair'][1], item['relation']) in facts:
-            correct += 1
-        prec.append(float(correct) / float(i + 1))
-        rec.append(float(correct) / float(total))
-
-    _auc = auc(x=rec, y=prec)
-    np_prec = np.array(prec)
-    np_rec = np.array(rec)
-    f1 = (2 * np_prec * np_rec / (np_prec + np_rec + 1e-20)).max()
-    mean_prec = np_prec.mean()
-    result = {'prec': np_prec, 'rec': np_rec, 'mean_prec': mean_prec, 'f1': f1, 'auc': _auc}
+    # PR
+    order = np.argsort(y_pred)[::-1]
+    correct = 0.
+    total = y_true.sum()
+    precision = []
+    recall = []
+    for i, o in enumerate(order):
+        correct += y_true[o]
+        precision.append(float(correct) / (i + 1))
+        recall.append(float(correct) / total)
+    precision = np.array(precision)
+    recall = np.array(recall)
+    result = {'prec': precision, 'rec': recall, 'p100': p100, 'p200': p200, 'p300': p300, 'pmean': pmean, 'auc': auc}
 
     return result
 
@@ -240,5 +241,5 @@ def eval(test_loader, model, id2rel, use_plm=True):
 if __name__ == '__main__':
     opt = Config()
     train_loader = data_loader(opt.train_path, opt, shuffle=True, training=True)
-    test_loader = data_loader(opt.test_path, opt, shuffle=False, training=False)
+    test_loader = data_loader(opt.test_path, opt, shuffle=True, training=False)
     train(train_loader, test_loader, opt)

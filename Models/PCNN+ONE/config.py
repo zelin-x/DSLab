@@ -40,8 +40,8 @@ class Config:
         self.bert_lr = 2e-5
         self.lr = 2e-3
         self.weight_decay = 1e-5
-        self.epochs = 4
-        self.batch_size = 128
+        self.epochs = 128
+        self.batch_size = 32
         self.patients = 5
 
         """checkpoints and result"""
